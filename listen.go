@@ -187,7 +187,8 @@ func (l *listener) handleIncoming() {
 				insecureConn := newSingleConn(ctx, l.local, "", conn)
 
 				if l.privk != nil && iconn.EncryptConnections {
-					secureConn, err := newSecureConn(ctx, l.privk, insecureConn)
+					secureConn, err := secureServerWithTLS(l.privk, insecureConn)
+					//secureConn, err := newSecureConn(ctx, l.privk, insecureConn)
 					if err != nil {
 						conn.Close()
 						log.Infof("ignoring conn we failed to secure: %s %s", err, insecureConn)

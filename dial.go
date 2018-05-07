@@ -6,17 +6,27 @@ import (
 	"math/rand"
 	"strings"
 	"time"
+	"errors"
+	crand "crypto/rand"
 
-	addrutil "github.com/libp2p/go-addr-util"
+	"github.com/libp2p/go-addr-util"
 	ci "github.com/libp2p/go-libp2p-crypto"
 	iconn "github.com/libp2p/go-libp2p-interface-conn"
-	ipnet "github.com/libp2p/go-libp2p-interface-pnet"
+	"github.com/libp2p/go-libp2p-interface-pnet"
 	lgbl "github.com/libp2p/go-libp2p-loggables"
-	peer "github.com/libp2p/go-libp2p-peer"
-	transport "github.com/libp2p/go-libp2p-transport"
+	"github.com/libp2p/go-libp2p-peer"
+	"github.com/libp2p/go-libp2p-transport"
 	ma "github.com/multiformats/go-multiaddr"
-	manet "github.com/multiformats/go-multiaddr-net"
+	"github.com/multiformats/go-multiaddr-net"
 	msmux "github.com/multiformats/go-multistream"
+	"crypto/tls"
+	tpt "github.com/libp2p/go-libp2p-transport"
+	"net"
+	"crypto/x509"
+	"crypto/rsa"
+	"math/big"
+	pb "github.com/libp2p/go-libp2p-crypto/pb"
+	"github.com/gogo/protobuf/proto"
 )
 
 // DialTimeout is the maximum duration a Dial is allowed to take.
@@ -145,7 +155,8 @@ func (d *Dialer) Dial(ctx context.Context, raddr ma.Multiaddr, remote peer.ID) (
 		return c, nil
 	}
 
-	c2, err := newSecureConn(ctx, d.PrivateKey, c)
+	//c2, err := newSecureConn(ctx, d.PrivateKey, c)
+	c2, err := secureClientWithTLS(d.PrivateKey, c)
 	if err != nil {
 		c.Close()
 		return nil, err
@@ -259,4 +270,191 @@ func MultiaddrNetMatch(tgt ma.Multiaddr, srcs []ma.Multiaddr) ma.Multiaddr {
 		}
 	}
 	return nil
+}
+
+/*===========Wrapper fro TLS conn===============*/
+func secureServerWithTLS(privateKey ci.PrivKey, connC iconn.Conn) (iconn.Conn, error) {
+	connObj, ok := connC.(net.Conn)
+	if !ok {
+		return connC, nil
+	}
+	cert := loadCerts(privateKey)
+	conn := tls.Server(connObj, &tls.Config{InsecureSkipVerify: true, Certificates: []tls.Certificate{cert}})
+	log.Info("*** Gaurav LOG ****** after tls server make")
+	return doHandshake(conn, connC)
+}
+
+func secureClientWithTLS(privateKey ci.PrivKey, connC iconn.Conn) (iconn.Conn, error) {
+	connObj, ok := connC.(net.Conn)
+	if !ok {
+		return connC, nil
+	}
+	cert := loadCerts(privateKey)
+	conn := tls.Client(connObj, &tls.Config{InsecureSkipVerify: true, Certificates: []tls.Certificate{cert},
+		ClientAuth:tls.RequireAndVerifyClientCert})
+	return doHandshake(conn, connC)
+}
+
+func loadCerts(privateKey ci.PrivKey) tls.Certificate {
+	// TODO: make this generic
+	//privBytes, _ := ci.MarshalPrivateKey(privateKey)
+	//pubBytes, _ := ci.MarshalPublicKey(privateKey.GetPublic())
+	//pubBytes, _ := privateKey.GetPublic().Bytes()
+	//privBytes, _ := privateKey.Bytes()
+	cert, err := keyToCertificate(privateKey)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return *cert
+}
+
+func doHandshake(conn *tls.Conn, insecure iconn.Conn) (iconn.Conn, error) {
+	log.Info("*** Gaurav LOG ****** after tls client make")
+	tlsConn := &tlsConn{secure: conn, insecure: insecure}
+	log.Info("*** Gaurav LOG ****** before tls handshake")
+	err := conn.Handshake()
+	log.Info("*** Gaurav LOG ****** after tls handshake", err)
+	return tlsConn, err
+}
+
+type tlsConn struct {
+	secure   net.Conn
+	insecure iconn.Conn
+}
+
+func (conn *tlsConn) Write(p []byte) (n int, err error) {
+	return conn.secure.Write(p)
+}
+
+func (conn *tlsConn) Read(p []byte) (n int, err error) {
+	return conn.secure.Read(p)
+}
+
+func (conn *tlsConn) LocalPeer() peer.ID {
+	return conn.insecure.LocalPeer()
+}
+
+func (conn *tlsConn) LocalPrivateKey() ci.PrivKey {
+	//return conn.insecure.LocalPrivateKey()
+	// TODO: implement this
+	return conn.insecure.LocalPrivateKey()
+}
+
+func (conn *tlsConn) LocalMultiaddr() ma.Multiaddr {
+	return conn.insecure.LocalMultiaddr()
+}
+
+// RemotePeer ID, PublicKey, and Address
+func (conn *tlsConn) RemotePeer() peer.ID {
+	return conn.insecure.RemotePeer()
+}
+
+func (conn *tlsConn) RemotePublicKey() ci.PubKey {
+	//return conn.secure.RemotePublicKey()
+	// TODO: implement this
+	if len(conn.secure.(*tls.Conn).ConnectionState().PeerCertificates) < 1{
+		log.Error("no keys")
+		return nil
+	}
+	permanentPubKey, err := certificateToKey(conn.secure.(*tls.Conn).ConnectionState().PeerCertificates[0])
+	if err != nil {
+		log.Error("permanentPubKey not valid", err)
+	}
+	return permanentPubKey
+}
+
+func (conn *tlsConn) RemoteMultiaddr() ma.Multiaddr {
+	return conn.insecure.RemoteMultiaddr()
+}
+
+// ID is an identifier unique to this connection.
+func (conn *tlsConn) ID() string {
+	return conn.insecure.ID()
+}
+
+func (conn *tlsConn) LocalAddr() net.Addr {
+	return conn.secure.LocalAddr()
+}
+
+func (conn *tlsConn) RemoteAddr() net.Addr {
+	return conn.secure.RemoteAddr()
+}
+
+func (conn *tlsConn) SetDeadline(t time.Time) error {
+	return conn.insecure.SetDeadline(t)
+}
+
+func (conn *tlsConn) SetReadDeadline(t time.Time) error {
+	return conn.insecure.SetReadDeadline(t)
+}
+
+func (conn *tlsConn) SetWriteDeadline(t time.Time) error {
+	return conn.insecure.SetWriteDeadline(t)
+}
+
+func (conn *tlsConn) Transport() tpt.Transport {
+	return conn.insecure.Transport()
+}
+
+func (conn *tlsConn) Close() error {
+	return conn.secure.Close()
+}
+
+func keyToCertificate(sk ci.PrivKey) (*tls.Certificate, error) {
+	tmpl := &x509.Certificate{}
+	tmpl.NotAfter = time.Now().Add(24 * time.Hour)
+	tmpl.NotBefore = time.Now().Add(-24 * time.Hour)
+	tmpl.SerialNumber, _ = crand.Int(crand.Reader, big.NewInt(1<<62))
+	tmpl.KeyUsage = x509.KeyUsageDigitalSignature
+	tmpl.ExtKeyUsage = append(tmpl.ExtKeyUsage, x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth)
+	p, _ := peer.IDFromPrivateKey(sk)
+	tmpl.Subject.CommonName = p.Pretty()
+
+	var publicKey, privateKey interface{}
+	keyBytes, err := sk.Bytes()
+	if err != nil {
+		return nil, err
+	}
+	pbmes := new(pb.PrivateKey)
+	if err := proto.Unmarshal(keyBytes, pbmes); err != nil {
+		return nil, err
+	}
+	switch pbmes.GetType() {
+	case pb.KeyType_RSA:
+		tmpl.SignatureAlgorithm = x509.SHA256WithRSA
+		k, err := x509.ParsePKCS1PrivateKey(pbmes.GetData())
+		if err != nil {
+			return nil, err
+		}
+		publicKey = &k.PublicKey
+		privateKey = k
+	default:
+		return nil, errors.New("unsupported key type for TLS")
+	}
+	cert, err := x509.CreateCertificate(crand.Reader, tmpl, tmpl, publicKey, privateKey)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Certificate{
+		Certificate: [][]byte{cert},
+		PrivateKey:  privateKey,
+	}, nil
+}
+
+func certificateToKey(cert *x509.Certificate) (ci.PubKey, error) {
+	switch pk := cert.PublicKey.(type) {
+	case *rsa.PublicKey:
+		der, err := x509.MarshalPKIXPublicKey(pk)
+		if err != nil {
+			return nil, err
+		}
+		k, err := ci.UnmarshalRsaPublicKey(der)
+		if err != nil {
+			return nil, err
+		}
+		return k, nil
+	default:
+		return nil, errors.New("unsupported certificate key type")
+	}
 }
