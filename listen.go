@@ -194,6 +194,7 @@ func (l *listener) handleIncoming() {
 						log.Infof("ignoring conn we failed to secure: %s %s", err, insecureConn)
 						return
 					}
+
 					conn = secureConn
 				} else {
 					log.Warning("listener %s listening INSECURELY!", l)

@@ -279,8 +279,8 @@ func secureServerWithTLS(privateKey ci.PrivKey, connC iconn.Conn) (iconn.Conn, e
 		return connC, nil
 	}
 	cert := loadCerts(privateKey)
-	conn := tls.Server(connObj, &tls.Config{InsecureSkipVerify: true, Certificates: []tls.Certificate{cert}})
-	log.Info("*** Gaurav LOG ****** after tls server make")
+	conn := tls.Server(connObj, &tls.Config{InsecureSkipVerify: true, Certificates: []tls.Certificate{cert},
+		ClientAuth: tls.RequestClientCert})
 	return doHandshake(conn, connC)
 }
 
@@ -310,17 +310,29 @@ func loadCerts(privateKey ci.PrivKey) tls.Certificate {
 }
 
 func doHandshake(conn *tls.Conn, insecure iconn.Conn) (iconn.Conn, error) {
-	log.Info("*** Gaurav LOG ****** after tls client make")
 	tlsConn := &tlsConn{secure: conn, insecure: insecure}
-	log.Info("*** Gaurav LOG ****** before tls handshake")
 	err := conn.Handshake()
-	log.Info("*** Gaurav LOG ****** after tls handshake", err)
+	log.Info("after tls handshake", err)
+
+	if len(conn.ConnectionState().PeerCertificates) < 1 {
+		log.Error("no keys")
+		return nil , fmt.Errorf("no public key for peer")
+	}
+
+	pubKey, err := certificateToKey(conn.ConnectionState().PeerCertificates[0])
+	if err != nil {
+		log.Error("permanentPubKey not valid", err)
+		return nil, err
+	}
+
+	tlsConn.peerPubKey = pubKey
 	return tlsConn, err
 }
 
 type tlsConn struct {
-	secure   net.Conn
-	insecure iconn.Conn
+	secure     net.Conn
+	insecure   iconn.Conn
+	peerPubKey ci.PubKey
 }
 
 func (conn *tlsConn) Write(p []byte) (n int, err error) {
@@ -336,8 +348,6 @@ func (conn *tlsConn) LocalPeer() peer.ID {
 }
 
 func (conn *tlsConn) LocalPrivateKey() ci.PrivKey {
-	//return conn.insecure.LocalPrivateKey()
-	// TODO: implement this
 	return conn.insecure.LocalPrivateKey()
 }
 
@@ -351,17 +361,7 @@ func (conn *tlsConn) RemotePeer() peer.ID {
 }
 
 func (conn *tlsConn) RemotePublicKey() ci.PubKey {
-	//return conn.secure.RemotePublicKey()
-	// TODO: implement this
-	if len(conn.secure.(*tls.Conn).ConnectionState().PeerCertificates) < 1{
-		log.Error("no keys")
-		return nil
-	}
-	permanentPubKey, err := certificateToKey(conn.secure.(*tls.Conn).ConnectionState().PeerCertificates[0])
-	if err != nil {
-		log.Error("permanentPubKey not valid", err)
-	}
-	return permanentPubKey
+	return conn.peerPubKey
 }
 
 func (conn *tlsConn) RemoteMultiaddr() ma.Multiaddr {
