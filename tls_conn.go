@@ -104,7 +104,8 @@ func (conn *tlsConn) LocalMultiaddr() ma.Multiaddr {
 
 // RemotePeer ID, PublicKey, and Address
 func (conn *tlsConn) RemotePeer() peer.ID {
-	return conn.insecure.RemotePeer()
+	id, _ := peer.IDFromPublicKey(conn.RemotePublicKey())
+	return id
 }
 
 func (conn *tlsConn) RemotePublicKey() ci.PubKey {
