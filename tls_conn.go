@@ -28,7 +28,7 @@ func secureServerWithTLS(privateKey ci.PrivKey, connC iconn.Conn) (iconn.Conn, e
 	cert := loadCerts(privateKey)
 	conn := tls.Server(connObj, &tls.Config{InsecureSkipVerify: true, Certificates: []tls.Certificate{cert},
 		ClientAuth: tls.RequestClientCert})
-	return doHandshake(conn, connC)
+	return doHandshake(conn, connC, privateKey)
 }
 
 func secureClientWithTLS(privateKey ci.PrivKey, connC iconn.Conn) (iconn.Conn, error) {
@@ -39,7 +39,7 @@ func secureClientWithTLS(privateKey ci.PrivKey, connC iconn.Conn) (iconn.Conn, e
 	cert := loadCerts(privateKey)
 	conn := tls.Client(connObj, &tls.Config{InsecureSkipVerify: true, Certificates: []tls.Certificate{cert},
 		ClientAuth: tls.RequireAndVerifyClientCert})
-	return doHandshake(conn, connC)
+	return doHandshake(conn, connC, privateKey)
 }
 
 func loadCerts(privateKey ci.PrivKey) tls.Certificate {
@@ -56,8 +56,8 @@ func loadCerts(privateKey ci.PrivKey) tls.Certificate {
 	return *cert
 }
 
-func doHandshake(conn *tls.Conn, insecure iconn.Conn) (iconn.Conn, error) {
-	tlsConn := &tlsConn{secure: conn, insecure: insecure}
+func doHandshake(conn *tls.Conn, insecure iconn.Conn, priv ci.PrivKey) (iconn.Conn, error) {
+	tlsConn := &tlsConn{secure: conn, insecure: insecure, localPrivateKey:priv}
 	err := conn.Handshake()
 	log.Info("after tls handshake", err)
 
@@ -77,9 +77,10 @@ func doHandshake(conn *tls.Conn, insecure iconn.Conn) (iconn.Conn, error) {
 }
 
 type tlsConn struct {
-	secure     net.Conn
-	insecure   iconn.Conn
-	peerPubKey ci.PubKey
+	secure          net.Conn
+	insecure        iconn.Conn
+	peerPubKey      ci.PubKey
+	localPrivateKey ci.PrivKey
 }
 
 func (conn *tlsConn) Write(p []byte) (n int, err error) {
@@ -95,7 +96,7 @@ func (conn *tlsConn) LocalPeer() peer.ID {
 }
 
 func (conn *tlsConn) LocalPrivateKey() ci.PrivKey {
-	return conn.insecure.LocalPrivateKey()
+	return conn.localPrivateKey
 }
 
 func (conn *tlsConn) LocalMultiaddr() ma.Multiaddr {
@@ -118,7 +119,7 @@ func (conn *tlsConn) RemoteMultiaddr() ma.Multiaddr {
 
 // ID is an identifier unique to this connection.
 func (conn *tlsConn) ID() string {
-	return conn.insecure.ID()
+	return iconn.ID(conn)
 }
 
 func (conn *tlsConn) LocalAddr() net.Addr {
