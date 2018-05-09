@@ -20,6 +20,9 @@ import (
 	"github.com/libp2p/go-libp2p-peer"
 )
 
+var PluggableCertToToKey = certificateToKey
+var PluggableKeyToCert = keyToCertificate
+
 func secureServerWithTLS(privateKey ci.PrivKey, connC iconn.Conn) (iconn.Conn, error) {
 	connObj, ok := connC.(net.Conn)
 	if !ok {
@@ -48,7 +51,7 @@ func loadCerts(privateKey ci.PrivKey) tls.Certificate {
 	//pubBytes, _ := ci.MarshalPublicKey(privateKey.GetPublic())
 	//pubBytes, _ := privateKey.GetPublic().Bytes()
 	//privBytes, _ := privateKey.Bytes()
-	cert, err := keyToCertificate(privateKey)
+	cert, err := PluggableKeyToCert(privateKey)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -66,7 +69,7 @@ func doHandshake(conn *tls.Conn, insecure iconn.Conn, priv ci.PrivKey) (iconn.Co
 		return nil, fmt.Errorf("no public key for peer")
 	}
 
-	pubKey, err := certificateToKey(conn.ConnectionState().PeerCertificates[0])
+	pubKey, err := PluggableCertToToKey(conn.ConnectionState().PeerCertificates[0])
 	if err != nil {
 		log.Error("permanentPubKey not valid", err)
 		return nil, err
@@ -170,6 +173,7 @@ func keyToCertificate(sk ci.PrivKey) (*tls.Certificate, error) {
 	if err := proto.Unmarshal(keyBytes, pbmes); err != nil {
 		return nil, err
 	}
+
 	switch pbmes.GetType() {
 	case pb.KeyType_RSA:
 		tmpl.SignatureAlgorithm = x509.SHA256WithRSA
