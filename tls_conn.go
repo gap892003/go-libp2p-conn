@@ -26,7 +26,7 @@ var PluggableKeyToCert = keyToCertificate
 func secureServerWithTLS(privateKey ci.PrivKey, connC iconn.Conn) (iconn.Conn, error) {
 	connObj, ok := connC.(net.Conn)
 	if !ok {
-		return connC, nil
+		return nil, fmt.Errorf("could not secure with tls")
 	}
 	cert := loadCerts(privateKey)
 	conn := tls.Server(connObj, &tls.Config{InsecureSkipVerify: true, Certificates: []tls.Certificate{cert},
@@ -37,7 +37,7 @@ func secureServerWithTLS(privateKey ci.PrivKey, connC iconn.Conn) (iconn.Conn, e
 func secureClientWithTLS(privateKey ci.PrivKey, connC iconn.Conn) (iconn.Conn, error) {
 	connObj, ok := connC.(net.Conn)
 	if !ok {
-		return connC, nil
+		return nil, fmt.Errorf("could not secure with tls")
 	}
 	cert := loadCerts(privateKey)
 	conn := tls.Client(connObj, &tls.Config{InsecureSkipVerify: true, Certificates: []tls.Certificate{cert},
